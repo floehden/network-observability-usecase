@@ -1,0 +1,94 @@
+apiVersion: operator.gnmic.dev/v1alpha1
+kind: TargetProfile
+metadata:
+  name: default-profile
+  namespace: default
+spec:
+  credentialsRef: device-credentials
+  tls: {}
+  timeout: 10s
+  encoding: JSON_IETF
+---
+apiVersion: operator.gnmic.dev/v1alpha1
+kind: Target
+metadata:
+  name: spine1
+  namespace: default
+  labels:
+    role: spine
+spec:
+  address: 192.168.139.126:57401
+  profile: default-profile
+---
+apiVersion: operator.gnmic.dev/v1alpha1
+kind: Target
+metadata:
+  name: spine2
+  namespace: default
+  labels:
+    role: spine
+spec:
+  address: 192.168.139.126:57402
+  profile: default-profile
+---
+apiVersion: operator.gnmic.dev/v1alpha1
+kind: Target
+metadata:
+  name: leaf1
+  namespace: default
+  labels:
+    role: leaf
+spec:
+  address: 192.168.139.126:57411
+  profile: default-profile
+---
+apiVersion: operator.gnmic.dev/v1alpha1
+kind: Target
+metadata:
+  name: leaf2
+  namespace: default
+  labels:
+    role: leaf
+spec:
+  address: 192.168.139.126:57412
+  profile: default-profile
+---
+apiVersion: operator.gnmic.dev/v1alpha1
+kind: Target
+metadata:
+  name: leaf3
+  namespace: default
+  labels:
+    role: leaf
+spec:
+  address: 192.168.139.126:57413
+  profile: default-profile
+---
+apiVersion: operator.gnmic.dev/v1alpha1
+kind: Subscription
+metadata:
+  name: interface-stats
+  namespace: default
+  labels:
+    type: interfaces
+spec:
+  paths:
+    - /interface/statistics
+    - /interface/oper-state
+  mode: STREAM/SAMPLE
+  sampleInterval: 5s
+  encoding: JSON_IETF
+---
+apiVersion: operator.gnmic.dev/v1alpha1
+kind: Subscription
+metadata:
+  name: system-stats
+  namespace: default
+  labels:
+    type: system
+spec:
+  paths:
+    - /platform/control[slot=A]/cpu[index=all]/total
+  mode: STREAM/SAMPLE
+  sampleInterval: 10s
+  encoding: JSON_IETF

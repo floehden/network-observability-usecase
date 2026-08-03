@@ -1,0 +1,60 @@
+name: sync-targets-from-infrahub
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  render-and-commit:
+    runs-on: ubuntu-latest
+    env:
+      INFRAHUB_ADDRESS: "http://infrahub-infrahub-server.infrahub.svc.cluster.local:8000"
+      INFRAHUB_API_TOKEN: ${{ secrets.INFRAHUB_API_TOKEN }}
+      TARGET_HOST_IP: "192.168.139.126"
+      GITEA_USER: "admin"
+      PUSH_PASSWORD: ${{ secrets.PUSH_PASSWORD }}
+      FLUX_REPO: "network-observability-config"
+      SYNC_REPO: "infrahub-sync"
+      GITEA_HOST: "gitea-http.gitea.svc.cluster.local:3000"
+
+    steps:
+      - name: Bootstrap python on Alpine
+        run: |
+          set -e
+          if ! command -v python3 >/dev/null 2>&1; then
+            echo "Installing python3 + pip via apk..."
+            apk add --no-cache python3 py3-pip
+          fi
+          python3 --version
+          git --version
+
+      - name: Clone infrahub-sync (holds render script)
+        run: |
+          rm -rf syncrepo
+          git clone "http://${GITEA_USER}:${PUSH_PASSWORD}@${GITEA_HOST}/admin/${SYNC_REPO}.git" syncrepo
+
+      - name: Install python dependencies
+        run: python3 -m pip install --no-cache-dir --break-system-packages "infrahub-sdk<2"
+
+      - name: Clone the Flux repo
+        run: |
+          rm -rf fluxrepo
+          git clone "http://${GITEA_USER}:${PUSH_PASSWORD}@${GITEA_HOST}/admin/${FLUX_REPO}.git" fluxrepo
+
+      - name: Render targets from Infrahub into the Flux repo
+        env:
+          OUTPUT_FILE: "fluxrepo/02-targets.yaml"
+        run: python3 syncrepo/render_targets.py
+
+      - name: Commit and push if changed
+        run: |
+          cd fluxrepo
+          git config user.email "infrahub-bot@lab.local"
+          git config user.name "Infrahub Sync Bot"
+          if git diff --quiet -- 02-targets.yaml; then
+            echo "No changes in targets — nothing to commit."
+            exit 0
+          fi
+          git add 02-targets.yaml
+          git commit -m "chore(targets): sync from Infrahub [skip ci]"
+          git push "http://${GITEA_USER}:${PUSH_PASSWORD}@${GITEA_HOST}/admin/${FLUX_REPO}.git" HEAD:main
+          echo "Pushed updated targets to ${FLUX_REPO}."

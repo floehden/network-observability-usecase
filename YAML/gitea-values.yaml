@@ -1,0 +1,36 @@
+gitea:
+  admin:
+    existingSecret: gitea-admin-secret
+  config:
+    server:
+      PROTOCOL: http
+      DOMAIN: gitea-http.gitea.svc.cluster.local
+      ROOT_URL: "http://localhost:3000/" 
+    actions:
+      ENABLED: true
+    # Force memory to completely bypass the network cache
+    cache:
+      ADAPTER: memory
+    queue:
+      TYPE: level
+    session:
+      PROVIDER: memory
+
+# Keep HA Postgres for stability
+postgresql:
+  enabled: false
+postgresql-ha:
+  enabled: true
+
+# Explicitly kill EVERY possible caching subchart
+redis:
+  enabled: false
+redis-cluster:
+  enabled: false
+valkey:
+  enabled: false
+valkey-cluster:
+  enabled: false
+
+ingress:
+  enabled: false

@@ -1,0 +1,54 @@
+apiVersion: operator.gnmic.dev/v1alpha1
+kind: Cluster
+metadata:
+  name: telemetry-cluster
+  namespace: default
+spec:
+  image: ghcr.io/openconfig/gnmic:latest
+  api:
+    restPort: 7890
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+---
+apiVersion: operator.gnmic.dev/v1alpha1
+kind: Output
+metadata:
+  name: prom-output
+  namespace: default
+  labels:
+    output-type: prometheus
+spec:
+  type: prometheus
+  config:
+    metric-prefix: gnmic
+    listen: ":10124"
+    export-timestamps: true
+    strings-as-labels: true
+---
+apiVersion: operator.gnmic.dev/v1alpha1
+kind: Pipeline
+metadata:
+  name: spine-telemetry
+  namespace: default
+spec:
+  clusterRef: telemetry-cluster
+  enabled: true
+  targetSelectors:
+    - matchLabels:
+        role: spine
+    - matchLabels:
+        role: leaf
+  subscriptionSelectors:
+    - matchLabels:
+        type: interfaces
+    - matchLabels:
+        type: system
+  outputs:
+    outputSelectors:
+      - matchLabels:
+          output-type: prometheus

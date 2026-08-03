@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gnmic-operator-status-patch
+rules:
+- apiGroups: ["operator.gnmic.dev"]
+  resources: ["targets/status"]
+  verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gnmic-operator-status-patch-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gnmic-operator-status-patch
+subjects:
+- kind: ServiceAccount
+  name: gnmic-operator
+  namespace: default

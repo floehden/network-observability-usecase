@@ -1,0 +1,90 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: infrahub-relay
+---
+# The relay application code, mounted into a stock python container.
+# Rendered by the Makefile from relay/app.py via kubectl create configmap.
+# (This file documents the shape; the Makefile generates the real ConfigMap
+#  so app.py stays the single source of truth.)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: relay-secrets
+  namespace: infrahub-relay
+type: Opaque
+stringData:
+  # Populated by the Makefile (configure-webhook target).
+  GITEA_TOKEN: "REPLACED_BY_MAKEFILE"
+  # Optional: set to the CoreStandardWebhook shared_key to enable signature
+  # verification. Left empty in the lab to keep things simple.
+  SHARED_KEY: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infrahub-relay
+  namespace: infrahub-relay
+  labels:
+    app: infrahub-relay
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: infrahub-relay
+  template:
+    metadata:
+      labels:
+        app: infrahub-relay
+    spec:
+      containers:
+        - name: relay
+          image: python:3.11-slim
+          command: ["/bin/sh", "-c"]
+          args:
+            - "pip install --no-cache-dir flask==3.0.3 && python /app/app.py"
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GITEA_DISPATCH_URL
+              value: "http://gitea-http.gitea.svc.cluster.local:3000/api/v1/repos/admin/infrahub-sync/actions/workflows/sync-targets.yaml/dispatches"
+            - name: DISPATCH_REF
+              value: "main"
+            - name: DEBOUNCE_SECONDS
+              value: "5"
+            - name: GITEA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: relay-secrets
+                  key: GITEA_TOKEN
+            - name: SHARED_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: relay-secrets
+                  key: SHARED_KEY
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: app-code
+              mountPath: /app
+      volumes:
+        - name: app-code
+          configMap:
+            name: relay-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: infrahub-relay
+  namespace: infrahub-relay
+spec:
+  selector:
+    app: infrahub-relay
+  ports:
+    - port: 80
+      targetPort: 8080
