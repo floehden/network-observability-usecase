@@ -4,6 +4,13 @@
 venv/
 ENV/
 
+# Per-machine Makefile overrides (see local.mk.example)
+local.mk
+
+# Containerlab runtime state
+clab-*/
+*.clab.yml.bak
+
 # Python Cache
 __pycache__/
 *.py[cod]

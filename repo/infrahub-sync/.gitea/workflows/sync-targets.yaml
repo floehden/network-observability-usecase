@@ -9,7 +9,6 @@ jobs:
     env:
       INFRAHUB_ADDRESS: "http://infrahub-infrahub-server.infrahub.svc.cluster.local:8000"
       INFRAHUB_API_TOKEN: ${{ secrets.INFRAHUB_API_TOKEN }}
-      TARGET_HOST_IP: "192.168.139.126"
       GITEA_USER: "admin"
       PUSH_PASSWORD: ${{ secrets.PUSH_PASSWORD }}
       FLUX_REPO: "network-observability-config"
