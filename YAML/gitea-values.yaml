@@ -5,7 +5,8 @@ gitea:
     server:
       PROTOCOL: http
       DOMAIN: gitea-http.gitea.svc.cluster.local
-      ROOT_URL: "http://localhost:3000/" 
+      # Overridden by the Makefile to match GITEA_LOCAL_PORT.
+      ROOT_URL: "http://localhost:3030/"
     actions:
       ENABLED: true
     # Force memory to completely bypass the network cache

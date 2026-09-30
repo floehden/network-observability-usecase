@@ -1,4 +1,5 @@
 import os
+import sys
 import yaml
 import asyncio
 from infrahub_sdk import InfrahubClient, Config
@@ -9,16 +10,14 @@ REPO_LOCATION = "http://gitea-http.gitea.svc.cluster.local:3000/admin/infrahub-s
 # Groups we import as network devices
 DEVICE_GROUPS = {"spine", "leaf"}
 
-# The host IP that exposes the containerlab gNMI ports. Today all devices are
-# reachable via this single docker-host IP + their mapped host port. Override
-# with GNMI_HOST_IP to point elsewhere. Later, you can instead store each
-# device's real mgmt IP (see USE_MGMT_IP below).
-GNMI_HOST_IP = os.environ.get("GNMI_HOST_IP", "192.168.139.126")
-
-# If set to "1", store each node's mgmt-ipv4 as the gnmi_address instead of the
-# shared host IP (for when devices become directly reachable). Port then
-# defaults to the in-container gNMI port (57400) unless a host mapping exists.
-USE_MGMT_IP = os.environ.get("USE_MGMT_IP", "0") == "1"
+# How gNMIc (running in Kubernetes) reaches the devices:
+#   mgmt - store each node's containerlab mgmt-ipv4 and the in-container gNMI
+#          port. Works whenever the cluster nodes sit on the clab mgmt network
+#          (e.g. kind attached with `make lab-connect`, or k3s on the lab host).
+#   host - store one docker-host IP (GNMI_HOST_IP) plus each node's published
+#          host port from the clab 'ports' mapping. Used on OrbStack.
+GNMI_MODE = os.environ.get("GNMI_MODE", "mgmt")
+GNMI_HOST_IP = os.environ.get("GNMI_HOST_IP", "")
 
 # Default in-container gNMI port for SR Linux
 DEFAULT_GNMI_PORT = 57400
@@ -42,8 +41,10 @@ def parse_host_port(node_data):
 def resolve_address_and_port(node_data):
     """Decide what gnmi_address/gnmi_port to store for a node."""
     host_port = parse_host_port(node_data)
-    if USE_MGMT_IP:
-        addr = node_data.get("mgmt-ipv4", GNMI_HOST_IP)
+    if GNMI_MODE == "mgmt":
+        # Without a static mgmt-ipv4 the address is only known at deploy time;
+        # render_targets.py skips devices with no gnmi_address.
+        addr = node_data.get("mgmt-ipv4")
         # when dialing the device directly, use the container gNMI port
         port = DEFAULT_GNMI_PORT
     else:
@@ -54,6 +55,11 @@ def resolve_address_and_port(node_data):
 
 
 async def main():
+    if GNMI_MODE not in ("mgmt", "host"):
+        sys.exit(f"❌ Unknown GNMI_MODE '{GNMI_MODE}' (use 'mgmt' or 'host').")
+    if GNMI_MODE == "host" and not GNMI_HOST_IP:
+        sys.exit("❌ GNMI_MODE=host needs GNMI_HOST_IP (the IP pods use to reach published docker ports).")
+
     client = InfrahubClient(
         address=os.environ["INFRAHUB_ADDRESS"],
         config=Config(api_token=os.environ["INFRAHUB_API_TOKEN"]),
@@ -101,7 +107,11 @@ async def main():
             dev.gnmi_port.value = port
             await dev.save()
             device_objs[node_name] = dev
-            print(f"   Created {group.capitalize()}: {node_name} -> {addr}:{port}")
+            if addr:
+                print(f"   Created {group.capitalize()}: {node_name} -> {addr}:{port}")
+            else:
+                print(f"   ⚠️ Created {group.capitalize()}: {node_name} without gnmi_address "
+                      f"(no mgmt-ipv4 in {CLAB_FILE}); set it in Infrahub to monitor it.")
 
     print("\n🔌 5. Creating Interfaces and Wiring Connections...")
     interfaces_created = {}

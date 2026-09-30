@@ -1,0 +1,5 @@
+# Keep LF endings in the working tree on every OS. Shell recipes, scripts and
+# SR Linux configs break with CRLF (e.g. a Windows checkout used from WSL).
+* text=auto eol=lf
+*.png binary
+*.svg binary

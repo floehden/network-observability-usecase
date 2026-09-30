@@ -1,0 +1,4 @@
+# Host-side tooling for `make deploy` (install with `make venv`).
+# The [ctl] extra provides infrahubctl.
+infrahub-sdk[ctl]
+pyyaml

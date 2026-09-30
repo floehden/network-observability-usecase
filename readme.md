@@ -14,7 +14,7 @@ Add a device in Infrahub and it starts being monitored. Delete it and it disappe
 - **Collects and visualizes** — the **gnmic-operator** streams gNMI telemetry from the SR Linux fabric into **Prometheus**, visualized in **Grafana**.
 - **Event-driven** — a change in Infrahub fires a webhook that triggers the render pipeline within seconds, via a lightweight relay.
 - **Cascade-safe deletes** — removing a device in Infrahub cascades to its interfaces and links, and the removal propagates all the way to the cluster.
-- **Reproducible from one command** — the entire stack stands up with `make deploy` and tears down with `make clean`.
+- **Reproducible from one command** — the entire stack stands up with `make deploy` (or `make up` on a fresh kind cluster) and tears down with `make clean`. It runs on Linux, macOS and Windows/WSL2.
 
 ---
 
@@ -103,46 +103,85 @@ The boundary between "human-managed" and "machine-generated" is a file boundary:
 
 ## 📋 Prerequisites
 
-- Docker
-- A Kubernetes cluster (Kind, K3s, or OrbStack)
-- `kubectl`, `helm`, `flux`
-- `containerlab`
-- Python 3 with `infrahub-sdk` and `pyyaml` (`pip install infrahub-sdk pyyaml`)
-- `infrahubctl` (`pip install infrahub-sdk`)
+The Makefile needs `bash` and GNU `make`, so it runs on **Linux**, **macOS** and **Windows via WSL2**. It won't work from PowerShell or cmd.
+
+| Platform | Docker | Kubernetes | Notes |
+|---|---|---|---|
+| Linux | Docker Engine | kind (`make up`), or any cluster whose pods can reach the lab | Native containerlab install recommended |
+| macOS | OrbStack or Docker Desktop | OrbStack's built-in cluster, or kind | Without a local containerlab, the Makefile runs it from its container image |
+| Windows | Docker inside WSL2, or Docker Desktop with the WSL2 backend | kind inside WSL2 | Clone the repo **inside** the WSL filesystem (e.g. `~/src`), not under `/mnt/c` |
+
+Tools on your `PATH`:
+
+- `kubectl`, `helm`, [`flux`](https://fluxcd.io/flux/installation/#install-the-flux-cli), `git`, `curl`
+- [`kind`](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) if you use the kind path
+- [`containerlab`](https://containerlab.dev/install/) (optional; see above)
+- Python 3. Run `make venv` to create `.venv` with `infrahub-sdk[ctl]` (which includes `infrahubctl`) and `pyyaml`. The Makefile uses `.venv` automatically. On newer Debian/Ubuntu this also avoids the `externally-managed-environment` error from a global `pip install`.
+
+The stack is heavy: Infrahub, HA Postgres for Gitea, kube-prometheus-stack, plus five SR Linux nodes. Give Docker plenty of memory (roughly 16 GB).
+
+Run `make doctor` at any time to check tools, cluster access and lab networking. `make deploy` runs it first.
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Bring up the network fabric
+### How gNMIc reaches the devices
+
+The collector runs in Kubernetes, while the SR Linux nodes run in containerlab, so pods need a network path to the devices. The Makefile supports two modes, set with `GNMI_MODE`:
+
+- **`mgmt`** (default): each device is dialed on its containerlab management IP (`172.80.80.x:57400`). This needs the cluster nodes on the clab management network. `make lab-connect` does that for kind by attaching the kind node containers to the `st` Docker network. k3s running on the lab host usually has this path already.
+- **`host`**: every device is dialed on one Docker-host IP (`GNMI_HOST_IP`) plus its published port (`57401`, `57402`, `57411`, …). **This is picked automatically when the kube context is `orbstack`**, using `192.168.139.126`.
+
+Whichever mode you use, `make check-gnmi` dials every rendered target from a pod in the cluster and reports which ones are reachable.
+
+### Option A: kind (any OS with Docker)
 
 ```bash
-sudo containerlab deploy -t YAML/st.clab.yml
+make venv    # once
+make up      # containerlab fabric + kind cluster + lab-connect + deploy
 ```
 
-### 2. Deploy the entire platform
+Tear everything down again with `make down`.
+
+### Option B: OrbStack, or a cluster you already have
 
 ```bash
+make venv                 # once
+make lab-up               # or: sudo containerlab deploy -t YAML/st.clab.yml
+make lab-connect          # only for kind clusters
 make deploy
 ```
 
+### What `make deploy` does
+
 This single command:
+- runs the preflight checks (`make doctor`),
 - installs Gitea and creates both repositories,
 - deploys the CI runner,
 - installs cert-manager, the gnmic-operator, and the Prometheus stack,
 - installs Infrahub and loads the topology schema,
 - syncs the containerlab topology into Infrahub (devices, interfaces, links, gNMI address/port),
-- pushes the render logic and initial manifests into Git and sets CI secrets,
+- pushes the render logic into Git, renders `02-targets.yaml` from Infrahub into the config repo, and sets CI secrets,
 - installs Flux and points it at the config repo,
 - deploys the webhook relay and wires the Infrahub → relay → CI event loop.
 
 When it finishes, telemetry is flowing.
 
-### 3. Check health
+### Check health
 
 ```bash
-make status
+make status        # pods + Flux
+make check-gnmi    # can the cluster reach every device?
 ```
+
+### Per-machine settings
+
+To change defaults (ports, gNMI mode, kind cluster name, how containerlab is invoked), copy `local.mk.example` to `local.mk`. That file is git-ignored. You can also pass any of these on the command line, e.g. `make deploy GITEA_LOCAL_PORT=3300`. `make help` lists all targets.
+
+### About the lab configs
+
+`YAML/configs/` contains the SR Linux startup configs and the containerlab-side telemetry stack configs from [srl-labs/srl-telemetry-lab](https://github.com/srl-labs/srl-telemetry-lab) (BSD-3-Clause, see `YAML/configs/LICENSE`), so the topology deploys from a fresh clone.
 
 ---
 
@@ -184,9 +223,26 @@ make clean
 
 ## 🔌 Accessing the Services
 
-All services run inside the cluster. Use `kubectl port-forward` to reach them from your machine. Run each in its own terminal (or background with `&`).
+All services run inside the cluster. The quickest way in is:
 
-> **Tip:** if a local port is already in use, change the left-hand number (e.g. `3001:3000`). To clear stale forwards: `pkill -f "kubectl port-forward"`.
+```bash
+make ui
+```
+
+This forwards all four UIs, prints their URLs and credentials, and keeps running until you press Ctrl-C:
+
+| Service | URL | Login |
+|---|---|---|
+| Infrahub | http://localhost:8000 | admin token (printed) |
+| Gitea | http://localhost:3030 | `admin` / `password123` |
+| Grafana | http://localhost:3001 | `admin` / password (printed) |
+| Prometheus | http://localhost:9091 | — |
+
+Gitea and Prometheus deliberately avoid ports 3000 and 9090, because the containerlab Grafana and Prometheus publish those on the Docker host. Override any of them with `INFRAHUB_LOCAL_PORT`, `GITEA_LOCAL_PORT`, `GRAFANA_LOCAL_PORT` or `PROMETHEUS_LOCAL_PORT`.
+
+To forward services by hand instead, use the commands below. Run each in its own terminal (or background it with `&`).
+
+> **Tip:** if a local port is already in use, change the left-hand number (e.g. `3002:80`). To clear stale forwards: `pkill -f "kubectl port-forward"`.
 
 ### Infrahub (source of truth)
 
@@ -202,13 +258,13 @@ kubectl exec -n infrahub $POD -- printenv INFRAHUB_INITIAL_ADMIN_TOKEN
 ### Gitea (Git + CI)
 
 ```bash
-kubectl port-forward svc/gitea-http 3000:3000 -n gitea
+kubectl port-forward svc/gitea-http 3030:3000 -n gitea
 ```
-Open **http://localhost:3000** — login `admin` / `password123`. The **Actions** tab of the `infrahub-sync` repo shows render/commit runs.
+Open **http://localhost:3030** — login `admin` / `password123`. The **Actions** tab of the `infrahub-sync` repo shows render/commit runs.
 
 ### Grafana (dashboards)
 
-The Grafana that ships with the kube-prometheus-stack runs in the `monitoring` namespace behind a Service on port 80. Forward it to a local port (using `3001` to avoid colliding with Gitea on `3000`):
+The Grafana that ships with the kube-prometheus-stack runs in the `monitoring` namespace behind a Service on port 80. Forward it to a local port (using `3001` to avoid colliding with the containerlab Grafana on `3000`):
 
 ```bash
 kubectl port-forward svc/prometheus-grafana 3001:80 -n monitoring
@@ -225,7 +281,7 @@ kubectl get secret prometheus-grafana -n monitoring \
 
 Log in as `admin` with that password, then import the bundled dashboard via **Dashboards → Import** and upload `dashboard.json`.
 
-> **Note on the containerlab Grafana:** the containerlab topology also defines its *own* Grafana node (at `172.80.80.43:3000`, anonymous admin enabled) with pre-provisioned dashboards from `configs/grafana`. That is a **separate** instance from the Kubernetes one above. The K8s Grafana queries the in-cluster Prometheus that scrapes gNMIc; use it for the GitOps-driven telemetry. The containerlab one is only reachable if you expose that lab node's port.
+> **Note on the containerlab Grafana:** the containerlab topology also defines its *own* Grafana node (at `172.80.80.43:3000`, published on host port `3000`, anonymous admin enabled) with pre-provisioned dashboards from `YAML/configs/grafana`. That is a **separate** instance from the Kubernetes one above. The K8s Grafana queries the in-cluster Prometheus that scrapes gNMIc; use it for the GitOps-driven telemetry. On OrbStack and Docker Desktop, the published port is reachable at http://localhost:3000.
 
 #### Grafana access — troubleshooting
 
@@ -243,9 +299,9 @@ Or just pick a different local port: `kubectl port-forward svc/prometheus-grafan
 Pasting a block that contains `#` comment lines or a `?` in a URL can make zsh throw `command not found: #` or `no matches found`, and the real command may run against a half-ready port-forward — producing misleading results (e.g. an empty query result even though data exists). Run the port-forward and the query as **separate** commands, and quote any URL containing `?`:
 ```bash
 # start the forward first, in its own terminal or backgrounded:
-kubectl port-forward svc/prometheus-operated 9090:9090 -n monitoring &
+kubectl port-forward svc/prometheus-operated 9091:9090 -n monitoring &
 # then run the query as a single quoted line, no inline comments:
-curl -s 'http://localhost:9090/api/v1/query?query=up' | python3 -m json.tool
+curl -s 'http://localhost:9091/api/v1/query?query=up' | python3 -m json.tool
 ```
 
 **Grafana loads but panels are empty.**
@@ -255,11 +311,11 @@ The data itself lives in Prometheus, not Grafana — confirm Prometheus actually
 ### Prometheus (metrics / query)
 
 ```bash
-kubectl port-forward svc/prometheus-operated 9090:9090 -n monitoring
+kubectl port-forward svc/prometheus-operated 9091:9090 -n monitoring
 ```
-Open **http://localhost:9090**. Check **Status → Targets** for the gNMIc scrape target, or query directly:
+Open **http://localhost:9091**. Check **Status → Targets** for the gNMIc scrape target, or query directly:
 ```bash
-curl -s 'http://localhost:9090/api/v1/query?query=gnmic_srl_nokia_interfaces_interface_oper_state' \
+curl -s 'http://localhost:9091/api/v1/query?query=gnmic_srl_nokia_interfaces_interface_oper_state' \
   | python3 -c "import sys,json; print('series:', len(json.load(sys.stdin)['data']['result']))"
 ```
 
@@ -303,11 +359,27 @@ Then check the run in the `infrahub-sync` Actions tab. To bypass the webhook and
 The `PUSH_PASSWORD` CI secret must hold a valid Gitea token (`write:repository` scope). It's set automatically during deploy; if a run predates that, re-run `make bootstrap-workflow`.
 
 **Targets exist but no metrics.**
-Confirm the collector can reach the device addresses stored in Infrahub:
+First check that the cluster can reach the devices at all:
+```bash
+make check-gnmi
+```
+If the devices are unreachable: in `mgmt` mode on kind, run `make lab-connect`. This is needed again after the lab network is recreated. On other clusters, switch to `GNMI_MODE=host` with a `GNMI_HOST_IP` that your pods can reach, then run `make sync-topology test-sync`. Also check the collector logs:
 ```bash
 kubectl logs -n default -l operator.gnmic.dev/cluster=telemetry-cluster | grep -i error
 ```
 If addresses are wrong, fix `gnmi_address`/`gnmi_port` in Infrahub and re-sync.
+
+**A make target fails with "Port-forward … failed".**
+Something else is listening on that local port, often a stale `kubectl port-forward` or a containerlab node publishing the port. Stop it (`pkill -f "kubectl port-forward"`), or choose another port as the error message suggests, e.g. `make deploy GITEA_LOCAL_PORT=3300`.
+
+**`pip install` fails with `externally-managed-environment`.**
+Use `make venv` instead; the Makefile picks up `.venv` automatically.
+
+**Scripts fail with `$'\r': command not found` (Windows).**
+The files were checked out with CRLF line endings. The repo's `.gitattributes` prevents this for new clones. For an existing clone, run `git rm --cached -r . && git reset --hard`, and keep the clone inside the WSL filesystem.
+
+**kind pods crash with "too many open files" (Linux).**
+This is a known kind limit: raise `fs.inotify.max_user_watches` and `fs.inotify.max_user_instances` as described in the [kind known issues](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files).
 
 **Prometheus target DOWN.**
 Verify the `ServiceMonitor` label matches what Prometheus selects (`release: prometheus`) and that the metrics Service points at the collector's port (`10124`).
